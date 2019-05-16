@@ -1,0 +1,79 @@
+{
+  "threads": 10,
+  "fromDS": {
+    "url": "jdbc:oracle:thin:@//10.135.16.211:1521/dbjiopulse",
+    "username": "na_layers",
+    "password": "na_layers"
+  },
+  "toDS": {
+    "url": "jdbc:oracle:thin:@//10.144.114.157:1521/dbjiopulse",
+    "username": "na_layers",
+    "password": "id10t#proof"
+  },
+  "defs": [
+    {
+      "path": "../arrdep.json"
+    }
+  ],
+  "extract": {
+    "sql": "select id, shape, building_rjid from tb_building",
+    "csv": {
+      "file": "calls.csv",
+      "columns": []
+    },
+    "data" : [
+      { "code" : "ABC", "name" : "Something", "age": 16},
+      { "code" : "ABC", "name" : "Something", "age": 16},
+      { "code" : "ABC", "name" : "Something", "age": 16}
+    ]#,
+    #"limitRows": 1000
+  },
+  "transform": {
+    "columns": [
+      {
+        "name": "shape",
+        "sql": "select shape from TB_BUILDING",
+        "cache": false
+      }
+    ]
+  },
+  "load": [
+    {
+      "pre": {
+        "sql" : "",
+        "csv" : {
+          "file": "calls.csv",
+          "columns": ["a", "b"]
+        },
+        "data" : [
+          {"voyage_fk" : 11}
+        ]
+      },
+      "table": "kk_test_bldg",
+      "columns": [
+        {
+          "name": "shape",
+          "ref": "shape",
+		  "type": "SDO_GEOMETRY"
+        },
+		{
+          "name": "id",
+          "ref": "id"
+        },
+		{
+          "name": "building_rjid",
+          "ref": "building_rjid"
+        }
+      ],
+      "mode": "merge",
+      "post": {
+        "sql" : "",
+        "csv" : {
+          "file": "calls.csv",
+          "columns": []
+        }
+      }
+    }
+  ]
+}
+

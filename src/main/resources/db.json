@@ -1,0 +1,12 @@
+{
+  "fromDS": {
+    "url": "jdbc:oracle:thin:@ora12c:1521:orcl",
+    "username": "tacs_dev",
+    "password": "tacs_dev"
+  },
+  "toDS": {
+    "url": "jdbc:oracle:thin:@ora12c:1521:orcl",
+    "username": "ktacs",
+    "password": "ktacs"
+  }
+}

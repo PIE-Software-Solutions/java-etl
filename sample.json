@@ -1,0 +1,38 @@
+{
+  "threads": 20,
+  "fromDS": {
+    "url": "jdbc:oracle:thin:@//gis-scan.ril.com:1521/SAT",
+    "username": "na_layers",
+    "password": "na_layers"
+  },
+  "toDS": {
+    "url": "jdbc:oracle:thin:@//10.144.114.157:1521/dbjiopulse",
+    "username": "na_layers",
+    "password": "id10t#proof"
+  },
+  "extract": {
+    "sql": "select id, shape, building_rjid from tb_building"
+  },
+  "load": [
+    {
+      "table": "kk_test_bldg",
+      "columns": [
+        {
+          "name": "shape",
+          "ref": "shape",
+		  "type": "SDO_GEOMETRY"
+        },
+		{
+          "name": "id",
+          "ref": "id"
+        },
+		{
+          "name": "building_rjid",
+          "ref": "building_rjid"
+        }
+      ],
+      "mode": "merge"
+    }
+  ]
+}
+
