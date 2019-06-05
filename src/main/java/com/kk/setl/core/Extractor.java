@@ -1,21 +1,3 @@
-/**
- * Copyright (c) 2016 Vijay Vijayaram
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
- * and associated documentation files (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
- * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
- * THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
 package com.kk.setl.core;
 
 import com.kk.setl.model.Def;
@@ -23,6 +5,8 @@ import com.kk.setl.model.Row;
 import com.kk.setl.model.Status;
 import com.kk.setl.utils.CsvParser;
 import com.kk.setl.utils.RowSetUtil;
+
+import oracle.sql.ROWID;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -44,7 +28,8 @@ public class Extractor implements Runnable {
     final Def def;
     final Map<String, Integer> fromColumns;
     final Consumer<Boolean> doneCallback;
-
+    final ROWID minval;
+    final ROWID maxval;
     RowSetUtil rowSetUtil;
 
     /**
@@ -58,6 +43,10 @@ public class Extractor implements Runnable {
     public Extractor(BlockingQueue<Row> queue,
                      Def def,
                      Status status,
+                     ROWID minval,
+                     ROWID maxval,
+                     /*long minval,
+                     long maxval,*/
                      Consumer<Boolean> doneCallback) {
         this.queue = queue;
         this.def = def;
@@ -65,7 +54,23 @@ public class Extractor implements Runnable {
         this.fromColumns = new HashMap<>();
         this.doneCallback = doneCallback;
         this.rowSetUtil = RowSetUtil.getInstance();
+        this.minval = minval;
+        this.maxval = maxval;
     }
+    
+    public Extractor(BlockingQueue<Row> queue,
+            Def def,
+            Status status,
+            Consumer<Boolean> doneCallback) {
+			this.queue = queue;
+			this.def = def;
+			this.status = status;
+			this.fromColumns = new HashMap<>();
+			this.doneCallback = doneCallback;
+			this.rowSetUtil = RowSetUtil.getInstance();
+			this.minval = null;
+	        this.maxval = null;
+	}
 
     /**
      * thread runner
@@ -99,7 +104,8 @@ public class Extractor implements Runnable {
 
         boolean result = false;
         if (StringUtils.isNotEmpty(def.getExtract().getSql())) {
-            Logger.info("extracting from sql: {}", def.getExtract().getSql());
+            //Logger.debug("extracting from sql: {}", def.getExtract().getSql());
+            //Logger.info("extracting from sql: {}", def.getExtthread());
             result = extractDataFromSql();
         } else if (CollectionUtils.isNotEmpty(def.getExtract().getData())) {
             Logger.info("extracting from data");
@@ -165,12 +171,22 @@ public class Extractor implements Runnable {
             return true;
         }
         String sql = def.getExtract().getSql();
-
+        
+        if(null != def.getExtract().getTable() && !def.getExtract().getTable().isEmpty()) {
+        	if(null != def.getExtract().getWhereexists() && !def.getExtract().getWhereexists().isEmpty() && def.getExtract().getWhereexists().equalsIgnoreCase("true")) {
+        		sql = sql + " AND ROWID BETWEEN "+this.minval+" AND "+this.maxval;
+        	}else {
+        		sql = sql + " WHERE ROWID BETWEEN " + this.minval + " AND " + this.maxval;
+        	}
+        }
+        
+        Logger.error("error in extraction: {}", sql);
+        
         try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
             jrs.setCommand(sql);
             jrs.execute();
             jrs.setFetchDirection(ResultSet.FETCH_FORWARD);
-            jrs.setFetchSize(100);
+            jrs.setFetchSize(200);
 
             ResultSetMetaData meta = jrs.getMetaData();
             
