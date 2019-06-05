@@ -1,3 +1,21 @@
+/**
+ * Copyright (c) 2016 Vijay Vijayaram
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+ * and associated documentation files (the "Software"), to deal in the Software without restriction,
+ * including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+ * subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all copies or substantial
+ * portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+ * THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
 package com.kk.setl.core;
 
 import com.kk.setl.model.Def;
@@ -174,13 +192,13 @@ public class Extractor implements Runnable {
         
         if(null != def.getExtract().getTable() && !def.getExtract().getTable().isEmpty()) {
         	if(null != def.getExtract().getWhereexists() && !def.getExtract().getWhereexists().isEmpty() && def.getExtract().getWhereexists().equalsIgnoreCase("true")) {
-        		sql = sql + " AND ROWID BETWEEN "+this.minval+" AND "+this.maxval;
+        		sql = sql + " AND ROWID BETWEEN '" + this.minval + "' AND '" + this.maxval + "'";
         	}else {
-        		sql = sql + " WHERE ROWID BETWEEN " + this.minval + " AND " + this.maxval;
+        		sql = sql + " WHERE ROWID BETWEEN '" + this.minval + "' AND '" + this.maxval + "'";
         	}
         }
         
-        Logger.error("error in extraction: {}", sql);
+        Logger.debug("error in extraction: {}", sql);
         
         try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
             jrs.setCommand(sql);
