@@ -1,5 +1,6 @@
 {
   "threads": 20,
+  "extthread": 15,
   "fromDS": {
     "url": "jdbc:oracle:thin:@//gis-scan.ril.com:1521/SAT",
     "username": "na_layers",
@@ -11,7 +12,9 @@
     "password": "id10t#proof"
   },
   "extract": {
-    "sql": "select id, shape, building_rjid from tb_building"
+    "sql": "select id, shape, building_rjid from tb_building",
+    "table": "TB_PUBLICDOMAINPOI",
+    "whereexists": "true"
   },
   "load": [
     {
@@ -35,4 +38,3 @@
     }
   ]
 }
-
