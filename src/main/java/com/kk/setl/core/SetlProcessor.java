@@ -1,35 +1,27 @@
-/**
- * Copyright (c) 2016 Vijay Vijayaram
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
- * and associated documentation files (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
- * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
- * THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
 package com.kk.setl.core;
 
 import com.kk.setl.model.Def;
 import com.kk.setl.model.Row;
 import com.kk.setl.model.Status;
 import com.kk.setl.utils.Chrono;
+import com.kk.setl.utils.RowSetUtil;
+
+import oracle.sql.ROWID;
 
 import org.pmw.tinylog.Logger;
 
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.stream.IntStream;
+
+import javax.sql.rowset.JdbcRowSet;
 
 public class SetlProcessor implements Runnable {
     public final int DEFAULT_NUM_THREADS = 6;
@@ -37,7 +29,13 @@ public class SetlProcessor implements Runnable {
     final BlockingQueue<Row> queue;
     final Status status;
     final Def def;
-
+    final Map<String, Integer> fromColumns;
+    RowSetUtil rowSetUtil;
+    long minvalue = 0;
+    long maxvalue = 0;
+    long recCounter = 0;
+    int recIncCounter = 0;
+    long diff = 0;
     /**
      * constructor
      *
@@ -48,6 +46,8 @@ public class SetlProcessor implements Runnable {
         this.status = status;
         this.def = def;
         this.queue = new LinkedBlockingDeque<>(getNumThreads());
+        this.fromColumns = new HashMap<>();
+        this.rowSetUtil = RowSetUtil.getInstance();
     }
 
     /**
@@ -61,17 +61,40 @@ public class SetlProcessor implements Runnable {
     void process() {
         status.reset();
         Chrono ch = Chrono.start("Processor");
-
-        Thread et = startExtractor();
-        List<Thread> lts = startLoaders();
-
-        try {
-            et.join();
-            for (Thread lt : lts) {
-                lt.join();
-            }
-        } catch (InterruptedException ie) {}
-        ch.stop();
+        
+        if(null != def.getExtract().getTable() && !def.getExtract().getTable().isEmpty())
+        {
+	        //Thread et = startExtractor();
+	        List<Thread> et = startExtract();
+	        List<Thread> lts = startLoaders();
+	
+	        try {
+	            
+	            for (Thread lt : et) {
+	            	lt.join();
+	            }
+	            
+	            //et.join();
+	            
+	            for (Thread lt : lts) {
+	                lt.join();
+	            }
+	        } catch (InterruptedException ie) {}
+	        ch.stop();
+	        
+        }else    {
+        	Thread et = startExtractor();
+	        List<Thread> lts = startLoaders();
+	
+	        try {
+	            
+	        	et.join();	            
+	            for (Thread lt : lts) {
+	                lt.join();
+	            }
+	        } catch (InterruptedException ie) {}
+	        ch.stop();
+        }
     }
 
     /**
@@ -89,6 +112,45 @@ public class SetlProcessor implements Runnable {
         Logger.debug("Extractor thread {} started.", et.getName());
 
         return et;
+    }
+    
+    List<Thread> startExtract() {
+        Logger.info("Starting Extracter threads. noOfThreads={}", getNumExtThreads());
+        List<Row> row = null;
+        String sql = "";
+        
+        List<Thread> lts = new ArrayList<>();        
+        try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
+        	sql = "select min(r) start_id, max(r) end_id from (SELECT ntile("+getNumExtThreads()+") over (order by rowid) grp, rowid r FROM   "+def.getExtract().getTable()+") group  by grp";
+            jrs.setCommand(sql);
+            jrs.execute();
+            jrs.setFetchDirection(ResultSet.FETCH_FORWARD);
+
+            ResultSetMetaData meta = jrs.getMetaData();
+            
+            initFromColumns(meta);
+            row = parseData(jrs, meta);
+        } catch (Exception e) {
+            Logger.error("error in extraction: {}", e.getMessage());
+            Logger.debug(e);
+        }
+        diff = (maxvalue - minvalue)/getNumExtThreads();
+        diff++ ;
+        recCounter = minvalue;
+        if(null != row && row.size() > 0) {
+        	for(Row irow : row) {
+	        	IntStream.range(0, getNumExtThreads()).forEach((k) -> {
+	        		Extractor extractor = new Extractor(queue, def, status, (ROWID)irow.get("start_id"), (ROWID)irow.get("end_id"), (result) -> {
+		                IntStream.range(0, getNumThreads()).forEach((j) -> addDoneRow());
+		            });
+		            Thread et = new Thread(extractor, "extractor"+k);
+		            et.start();
+		            Logger.info("Extractor thread {} started."+" "+irow.get("start_id")+" "+irow.get("end_id"), et.getName());
+		            lts.add(et);
+	        	});
+        	}
+        }
+        return lts;
     }
 
     /**
@@ -130,4 +192,46 @@ public class SetlProcessor implements Runnable {
         }
         return DEFAULT_NUM_THREADS;
     }
+    
+    int getNumExtThreads() {
+        if (def != null && def.getExtthread() > 0) {
+            return def.getExtthread();
+        }
+        return DEFAULT_NUM_THREADS;
+    }
+    
+    void initFromColumns(ResultSetMetaData meta) throws SQLException {
+        fromColumns.putAll(rowSetUtil.getMetaColumns(meta));
+    }
+    
+    List<Row> parseData(JdbcRowSet jrs, ResultSetMetaData meta) throws SQLException {
+    	Row row = null;
+    	List<Row> rowArray = new ArrayList<Row>();
+        if (jrs == null || meta == null) {
+            return null;
+        }
+
+        while (jrs.next()) {
+            row = parseDataRow(jrs, meta);
+            rowArray.add(row);
+        }
+        return rowArray;
+    }
+
+    Row parseDataRow(JdbcRowSet jrs, ResultSetMetaData meta) throws SQLException {
+        if (jrs == null || meta == null) {
+            return null;
+        }
+
+        int colCount = meta.getColumnCount();
+
+        Map<String, Object> row = new HashMap<>();
+        for (int c = 1; c <= colCount; c++) {
+            row.put(meta.getColumnName(c).toLowerCase(), jrs.getObject(c));
+        }
+
+        Row ro = new Row(fromColumns, row);
+        return ro;
+    }
+    
 }
