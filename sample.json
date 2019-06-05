@@ -14,7 +14,8 @@
   "extract": {
     "sql": "select id, shape, building_rjid from tb_building",
     "table": "TB_PUBLICDOMAINPOI",
-    "whereexists": "true"
+    "splitwhere": "",
+    "whereexists": "false"
   },
   "load": [
     {
