@@ -73,7 +73,7 @@ public class Loader implements Runnable {
      * load definitions
      */
     protected void load() {
-        Logger.debug("Loader started.");
+        Logger.debug("Loader started." + this.id);
         processed = 0;
         while(true) {
             Row row = getRowFromQueue();
