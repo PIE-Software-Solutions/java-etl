@@ -116,7 +116,7 @@ public class SetlProcessor implements Runnable {
         
         List<Thread> lts = new ArrayList<>();        
         try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
-        	sql = "select min(r) start_id, max(r) end_id from (SELECT ntile("+getNumExtThreads()+") over (order by rowid) grp, rowid r FROM   "+def.getExtract().getTable()+") group  by grp";
+        	sql = "select min(r) start_id, max(r) end_id from (SELECT ntile("+getNumExtThreads()+") over (order by rowid) grp, rowid r FROM   "+def.getExtract().getTable()+" "+def.getExtract().getSplitwhere()+" ) group  by grp";
         	Logger.debug(sql);
             jrs.setCommand(sql);
             jrs.execute();
