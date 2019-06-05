@@ -31,11 +31,6 @@ public class SetlProcessor implements Runnable {
     final Def def;
     final Map<String, Integer> fromColumns;
     RowSetUtil rowSetUtil;
-    long minvalue = 0;
-    long maxvalue = 0;
-    long recCounter = 0;
-    int recIncCounter = 0;
-    long diff = 0;
     /**
      * constructor
      *
@@ -122,6 +117,7 @@ public class SetlProcessor implements Runnable {
         List<Thread> lts = new ArrayList<>();        
         try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
         	sql = "select min(r) start_id, max(r) end_id from (SELECT ntile("+getNumExtThreads()+") over (order by rowid) grp, rowid r FROM   "+def.getExtract().getTable()+") group  by grp";
+        	Logger.debug(sql);
             jrs.setCommand(sql);
             jrs.execute();
             jrs.setFetchDirection(ResultSet.FETCH_FORWARD);
@@ -134,20 +130,16 @@ public class SetlProcessor implements Runnable {
             Logger.error("error in extraction: {}", e.getMessage());
             Logger.debug(e);
         }
-        diff = (maxvalue - minvalue)/getNumExtThreads();
-        diff++ ;
-        recCounter = minvalue;
         if(null != row && row.size() > 0) {
+        	int k = 0;
         	for(Row irow : row) {
-	        	IntStream.range(0, getNumExtThreads()).forEach((k) -> {
-	        		Extractor extractor = new Extractor(queue, def, status, (ROWID)irow.get("start_id"), (ROWID)irow.get("end_id"), (result) -> {
-		                IntStream.range(0, getNumThreads()).forEach((j) -> addDoneRow());
-		            });
-		            Thread et = new Thread(extractor, "extractor"+k);
-		            et.start();
-		            Logger.info("Extractor thread {} started."+" "+irow.get("start_id")+" "+irow.get("end_id"), et.getName());
-		            lts.add(et);
-	        	});
+        		Extractor extractor = new Extractor(queue, def, status, (ROWID)irow.get("start_id"), (ROWID)irow.get("end_id"), (result) -> {
+	                IntStream.range(0, getNumThreads()).forEach((j) -> addDoneRow());
+	            });
+	            Thread et = new Thread(extractor, "extractor" + k++);
+	            et.start();
+	            Logger.info("Extractor thread {} started."+" "+irow.get("start_id")+" "+irow.get("end_id"), et.getName());
+	            lts.add(et);
         	}
         }
         return lts;
@@ -205,14 +197,13 @@ public class SetlProcessor implements Runnable {
     }
     
     List<Row> parseData(JdbcRowSet jrs, ResultSetMetaData meta) throws SQLException {
-    	Row row = null;
     	List<Row> rowArray = new ArrayList<Row>();
         if (jrs == null || meta == null) {
             return null;
         }
 
         while (jrs.next()) {
-            row = parseDataRow(jrs, meta);
+        	Row row  = parseDataRow(jrs, meta);
             rowArray.add(row);
         }
         return rowArray;
