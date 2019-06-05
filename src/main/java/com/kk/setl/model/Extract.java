@@ -29,6 +29,8 @@ public class Extract {
     private int limitRows;
     @JsonProperty("whereexists")
     private String whereexists;
+    @JsonProperty("splitwhere")
+    private String splitwhere;
     @JsonIgnore
     private Map<String, Object> additionalProperties = new HashMap<String, Object>();
 
@@ -130,6 +132,16 @@ public class Extract {
     @JsonProperty("whereexists")
 	public void setWhereexists(String whereexists) {
 		this.whereexists = whereexists;
+	}
+    
+    @JsonProperty("splitwhere")
+	public String getSplitwhere() {
+		return splitwhere;
+	}
+    
+    @JsonProperty("splitwhere")
+	public void setSplitwhere(String splitwhere) {
+		this.splitwhere = splitwhere;
 	}
 
 	@JsonAnyGetter
