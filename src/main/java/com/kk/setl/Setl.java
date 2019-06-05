@@ -1,237 +1,224 @@
-package com.kk.setl.core;
+package com.kk.setl;
 
+import com.kk.setl.core.SetlProcessor;
+import com.kk.setl.model.DS;
 import com.kk.setl.model.Def;
-import com.kk.setl.model.Row;
+import com.kk.setl.model.Load;
 import com.kk.setl.model.Status;
 import com.kk.setl.utils.Chrono;
-import com.kk.setl.utils.RowSetUtil;
 
-import oracle.sql.ROWID;
-
+import org.apache.commons.lang3.StringUtils;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.pmw.tinylog.Logger;
+import org.pmw.tinylog.LoggingContext;
 
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingDeque;
-import java.util.stream.IntStream;
+import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-import javax.sql.rowset.JdbcRowSet;
+public class Setl {
+    private static final int STATUS_EVERY = 1000;
 
-public class SetlProcessor implements Runnable {
-    public final int DEFAULT_NUM_THREADS = 6;
-
-    final BlockingQueue<Row> queue;
-    final Status status;
-    final Def def;
-    final Map<String, Integer> fromColumns;
-    RowSetUtil rowSetUtil;
-    long minvalue = 0;
-    long maxvalue = 0;
-    long recCounter = 0;
-    int recIncCounter = 0;
-    long diff = 0;
     /**
-     * constructor
+     * load definition file
+     * @param filePath
+     * @return
+     */
+    protected Def loadFile(String filePath) {
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            Path path = Paths.get(filePath);
+            final Def def = mapper.readValue(path.toFile(), Def.class);
+            def.setFilePath(path);
+
+            initCsvPaths(def, path);
+
+            loadDataStores(def);
+
+            LoggingContext.put("def", StringUtils.defaultIfBlank(def.getName(), ""));
+
+            if (def.getFromDS() != null) {
+                Logger.info("fromDS = {}@{}", def.getFromDS().getUsername(), def.getFromDS().getUrl());
+            }
+            if (def.getToDS() != null) {
+                Logger.info("toDS = {}@{}", def.getToDS().getUsername(), def.getToDS().getUrl());
+            }
+
+            return def;
+        } catch (Exception e) {
+            Logger.error("Invalid definition file: {}", e.getMessage());
+            Logger.trace(e);
+        }
+        return null;
+    }
+
+    /**
+     * load dataSources from default db.json file when def file skips them
      *
-     * @param status
      * @param def
      */
-    public SetlProcessor(final Status status, final Def def) {
-        this.status = status;
-        this.def = def;
-        this.queue = new LinkedBlockingDeque<>(getNumThreads());
-        this.fromColumns = new HashMap<>();
-        this.rowSetUtil = RowSetUtil.getInstance();
-    }
-
-    /**
-     * Thread runner - initiates process
-     */
-    @Override
-    public void run() {
-        process();
-    }
-
-    void process() {
-        status.reset();
-        Chrono ch = Chrono.start("Processor");
-        
-        if(null != def.getExtract().getTable() && !def.getExtract().getTable().isEmpty())
-        {
-	        //Thread et = startExtractor();
-	        List<Thread> et = startExtract();
-	        List<Thread> lts = startLoaders();
-	
-	        try {
-	            
-	            for (Thread lt : et) {
-	            	lt.join();
-	            }
-	            
-	            //et.join();
-	            
-	            for (Thread lt : lts) {
-	                lt.join();
-	            }
-	        } catch (InterruptedException ie) {}
-	        ch.stop();
-	        
-        }else    {
-        	Thread et = startExtractor();
-	        List<Thread> lts = startLoaders();
-	
-	        try {
-	            
-	        	et.join();	            
-	            for (Thread lt : lts) {
-	                lt.join();
-	            }
-	        } catch (InterruptedException ie) {}
-	        ch.stop();
+    protected void loadDataStores(final Def def) {
+        if (def == null || def.getFilePath() == null) {
+            return;
         }
-    }
 
-    /**
-     * start extractor thread
-     *
-     * @return
-     */
-    Thread startExtractor() {
-        Logger.info("Starting Extractor thread");
-        Extractor extractor = new Extractor(queue, def, status, (result) -> {
-            IntStream.range(0, getNumThreads()).forEach((i) -> addDoneRow());
-        });
-        Thread et = new Thread(extractor, "extractor");
-        et.start();
-        Logger.debug("Extractor thread {} started.", et.getName());
-
-        return et;
-    }
-    
-    List<Thread> startExtract() {
-        Logger.info("Starting Extracter threads. noOfThreads={}", getNumExtThreads());
-        List<Row> row = null;
-        String sql = "";
-        
-        List<Thread> lts = new ArrayList<>();        
-        try (JdbcRowSet jrs = rowSetUtil.getRowSet(def.getFromDS())) {
-        	sql = "select min(r) start_id, max(r) end_id from (SELECT ntile("+getNumExtThreads()+") over (order by rowid) grp, rowid r FROM   "+def.getExtract().getTable()+") group  by grp";
-            jrs.setCommand(sql);
-            jrs.execute();
-            jrs.setFetchDirection(ResultSet.FETCH_FORWARD);
-
-            ResultSetMetaData meta = jrs.getMetaData();
-            
-            initFromColumns(meta);
-            row = parseData(jrs, meta);
-        } catch (Exception e) {
-            Logger.error("error in extraction: {}", e.getMessage());
-            Logger.debug(e);
+        Path dbPath = def.getFilePath().resolveSibling("db.json");
+        if (dbPath == null || !dbPath.toFile().exists()) {
+            // resolve from parent folders
+            Path parent = def.getFilePath().getParent();
+            while (parent != null) {
+                dbPath = parent.resolveSibling("db.json");
+                if (dbPath != null && dbPath.toFile().exists()) {
+                    break;
+                }
+                parent = parent.getParent();
+            }
+            if (dbPath == null || !dbPath.toFile().exists()) {
+                return;
+            }
         }
-        diff = (maxvalue - minvalue)/getNumExtThreads();
-        diff++ ;
-        recCounter = minvalue;
-        if(null != row && row.size() > 0) {
-        	for(Row irow : row) {
-	        	IntStream.range(0, getNumExtThreads()).forEach((k) -> {
-	        		Extractor extractor = new Extractor(queue, def, status, (ROWID)irow.get("start_id"), (ROWID)irow.get("end_id"), (result) -> {
-		                IntStream.range(0, getNumThreads()).forEach((j) -> addDoneRow());
-		            });
-		            Thread et = new Thread(extractor, "extractor"+k);
-		            et.start();
-		            Logger.info("Extractor thread {} started."+" "+irow.get("start_id")+" "+irow.get("end_id"), et.getName());
-		            lts.add(et);
-	        	});
-        	}
-        }
-        return lts;
-    }
 
-    /**
-     * adds DONE row to indicate the loader thread can end
-     */
-    void addDoneRow() {
         try {
-            queue.put(Row.DONE);
+            Def dbDef = new ObjectMapper().readValue(dbPath.toFile(), Def.class);
+
+            if (def.getFromDS() == null && dbDef.getFromDS() != null) {
+                def.setFromDS(new DS());
+                def.getFromDS().setUrl(dbDef.getFromDS().getUrl());
+                def.getFromDS().setUsername(dbDef.getFromDS().getUsername());
+                def.getFromDS().setPassword(dbDef.getFromDS().getPassword());
+            }
+            if (def.getToDS() == null && dbDef.getToDS() != null) {
+                def.setToDS(new DS());
+                def.getToDS().setUrl(dbDef.getToDS().getUrl());
+                def.getToDS().setUsername(dbDef.getToDS().getUsername());
+                def.getToDS().setPassword(dbDef.getToDS().getPassword());
+            }
+        } catch (Exception e) {
+            Logger.error("DB.json error: {}", e.getMessage());
+            // just ignore
+        }
+    }
+
+    /**
+     * init csv paths
+     *
+     * @param def
+     * @param defPath
+     */
+    protected void initCsvPaths(final Def def, Path defPath) {
+        if (def.getExtract().getCsv() != null && StringUtils.isNotEmpty(def.getExtract().getCsv().getFile())) {
+            Path csvPath = defPath.getParent().resolve(def.getExtract().getCsv().getFile()).normalize();
+            def.getExtract().getCsv().setFilePath(csvPath.toAbsolutePath().toString());
+        }
+
+        for (Load load : def.getLoads()) {
+            if (load.getPre() != null && load.getPre().getCsv() != null && StringUtils.isNotEmpty(load.getPre().getCsv().getFile())) {
+                Path csvPath = defPath.getParent().resolve(load.getPre().getCsv().getFile()).normalize();
+                load.getPre().getCsv().setFilePath(csvPath.toAbsolutePath().toString());
+            }
+            if (load.getPost() != null && load.getPost().getCsv() != null && StringUtils.isNotEmpty(load.getPost().getCsv().getFile())) {
+                Path csvPath = defPath.getParent().resolve(load.getPost().getCsv().getFile()).normalize();
+                load.getPost().getCsv().setFilePath(csvPath.toAbsolutePath().toString());
+            }
+        }
+    }
+
+    /**
+     * start the process
+     * @param def
+     */
+    protected void start(final Def def) {
+        if (def == null) {
+            Logger.error("Invalid or blank definition");
+            return;
+        }
+
+        LoggingContext.put("defName", def.getName());
+        LoggingContext.put("loadTable", "");
+
+        Logger.info("Processing " + def.getName());
+
+        Status status = new Status((s) -> printStatEvery(s));
+        SetlProcessor processor = new SetlProcessor(status, def);
+        Thread t = new Thread(processor);
+        t.run();
+
+        try {
+            t.join();
         } catch (InterruptedException ie) {}
+
+        printStatAll(status);
     }
 
     /**
-     * starts loader threads
-     *
-     * @return
+     * print stats every
+     * @param status
      */
-    List<Thread> startLoaders() {
-        Logger.info("Starting Loader threads. noOfThreads={}", getNumThreads());
-        List<Thread> lts = new ArrayList<>();
-        IntStream.range(0, getNumThreads()).forEach((i) -> {
-            Loader loader = new Loader("l"+i, queue, status, def);
-            Thread lt = new Thread(loader);
-            lt.start();
-            lts.add(lt);
-            Logger.debug("Loader thread {} started.", lt.getName());
-        });
-
-        return lts;
+    protected void printStatEvery(Status status) {
+        if (status.getRowsFound() % STATUS_EVERY == 0) {
+            Logger.info("Found: {}, Processed: {}", status.getRowsFound(), status.getRowsProcessed());
+        }
     }
 
     /**
-     * determines the number of threads from definition or default
+     * print stats
+     * @param status
+     */
+    protected void printStatAll(Status status) {
+        Logger.info("Found: {}, Processed: {}, failed: {}, inserted: {}, updated: {}",
+                status.getRowsFound(), status.getRowsProcessed(), status.getRowsFailed(), status.getRowsInserted(), status.getRowsUpdated());
+    }
+
+    /**
+     * check if valid file
      *
+     * @param file
      * @return
      */
-    int getNumThreads() {
-        if (def != null && def.getThreads() > 0) {
-            return def.getThreads();
+    protected String getValidPath(final String file) {
+        if (StringUtils.isEmpty(file)) {
+            return null;
         }
-        return DEFAULT_NUM_THREADS;
-    }
-    
-    int getNumExtThreads() {
-        if (def != null && def.getExtthread() > 0) {
-            return def.getExtthread();
-        }
-        return DEFAULT_NUM_THREADS;
-    }
-    
-    void initFromColumns(ResultSetMetaData meta) throws SQLException {
-        fromColumns.putAll(rowSetUtil.getMetaColumns(meta));
-    }
-    
-    List<Row> parseData(JdbcRowSet jrs, ResultSetMetaData meta) throws SQLException {
-    	Row row = null;
-    	List<Row> rowArray = new ArrayList<Row>();
-        if (jrs == null || meta == null) {
+        // mac ~ fix
+        String path = file.replaceFirst("^~", System.getProperty("user.home"));
+
+        File f = Paths.get(path).toFile();
+        if (!f.exists()) {
+            System.out.println("Invalid file path: " + f.getAbsolutePath());
             return null;
         }
 
-        while (jrs.next()) {
-            row = parseDataRow(jrs, meta);
-            rowArray.add(row);
-        }
-        return rowArray;
+        LoggingContext.put("file", f.getName());
+        return f.getAbsolutePath();
     }
 
-    Row parseDataRow(JdbcRowSet jrs, ResultSetMetaData meta) throws SQLException {
-        if (jrs == null || meta == null) {
-            return null;
+    /**
+     * main runner
+     * @param args
+     */
+    public static void main(String[] args) {
+        LoggingContext.put("def", "");
+        LoggingContext.put("load", "");
+        LoggingContext.put("file", "");
+
+        if (args == null || args.length == 0) {
+            Logger.error("Definition file (json) is missing");
+            return;
         }
 
-        int colCount = meta.getColumnCount();
-
-        Map<String, Object> row = new HashMap<>();
-        for (int c = 1; c <= colCount; c++) {
-            row.put(meta.getColumnName(c).toLowerCase(), jrs.getObject(c));
+        Chrono kch = Chrono.start("all");
+        Setl me = new Setl();
+        for (String file : args) {
+            String filePath = me.getValidPath(file);
+            if (StringUtils.isNotEmpty(filePath)) {
+                Logger.info("Processing definiton: " + file);
+                Def def = me.loadFile(filePath);
+                me.start(def);
+            }
         }
 
-        Row ro = new Row(fromColumns, row);
-        return ro;
+        kch.stop();
+        Logger.info("ALL DONE!");
     }
-    
+
 }
